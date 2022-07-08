@@ -71,13 +71,13 @@ class EncoderDecoder(BaseSegmentor):
         """Encode images with backbone and decode into a semantic segmentation
         map of the same size as input."""
         x = self.extract_feat(img)
-        out = self._decode_head_forward_test(x, img_metas)
+        out, cls_feature = self._decode_head_forward_test(x, img_metas)
         out = resize(
             input=out,
             size=img.shape[2:],
             mode='bilinear',
             align_corners=self.align_corners)
-        return out
+        return out, cls_feature
 
     def _decode_head_forward_train(self, x, img_metas, gt_semantic_seg):
         """Run forward function and calculate loss for decode head in
@@ -168,7 +168,7 @@ class EncoderDecoder(BaseSegmentor):
 
         preds = img.new_zeros((batch_size, num_classes, h_img, w_img))
         count_mat = img.new_zeros((batch_size, 1, h_img, w_img))
-
+        cls_seg_feats = []
         for h_idx in range(h_grids):
             for w_idx in range(w_grids):
                 y1 = h_idx * h_stride
@@ -178,13 +178,14 @@ class EncoderDecoder(BaseSegmentor):
                 y1 = max(y2 - h_crop, 0)
                 x1 = max(x2 - w_crop, 0)
                 crop_img = img[:, :, y1:y2, x1:x2]
-                crop_seg_logit = self.encode_decode(crop_img, img_meta)
+                crop_seg_logit, cls_seg_feat = self.encode_decode(crop_img, img_meta)
 
                 preds += F.pad(crop_seg_logit,
                                (int(x1), int(preds.shape[3] - x2), int(y1),
                                 int(preds.shape[2] - y2)))
 
                 count_mat[:, :, y1:y2, x1:x2] += 1
+                cls_seg_feats.append(cls_seg_feat)
         assert (count_mat == 0).sum() == 0
         if torch.onnx.is_in_onnx_export():
             # cast count_mat to constant while exporting to ONNX
@@ -198,7 +199,7 @@ class EncoderDecoder(BaseSegmentor):
                 mode='bilinear',
                 align_corners=self.align_corners,
                 warning=False)
-        return preds
+        return preds,cls_seg_feats
 
     def whole_inference(self, img, img_meta, rescale):
         """Inference with full image."""
@@ -239,7 +240,7 @@ class EncoderDecoder(BaseSegmentor):
         ori_shape = img_meta[0]['ori_shape']
         assert all(_['ori_shape'] == ori_shape for _ in img_meta)
         if self.test_cfg.mode == 'slide':
-            seg_logit = self.slide_inference(img, img_meta, rescale)
+            seg_logit,cls_seg_feats = self.slide_inference(img, img_meta, rescale)
         else:
             seg_logit = self.whole_inference(img, img_meta, rescale)
         output = F.softmax(seg_logit, dim=1)
@@ -252,7 +253,7 @@ class EncoderDecoder(BaseSegmentor):
             elif flip_direction == 'vertical':
                 output = output.flip(dims=(2, ))
 
-        return output
+        return output,cls_seg_feats
 
     def simple_test(self, img, img_meta, rescale=True):
         """Simple test with single image."""
@@ -275,13 +276,14 @@ class EncoderDecoder(BaseSegmentor):
         # aug_test rescale all imgs back to ori_shape for now
         assert rescale
         # to save memory, we get augmented seg logit inplace
-        seg_logit = self.inference(imgs[0], img_metas[0], rescale)
+        seg_logit,cls_seg_feats = self.inference(imgs[0], img_metas[0], rescale)
         for i in range(1, len(imgs)):
-            cur_seg_logit = self.inference(imgs[i], img_metas[i], rescale)
+            cur_seg_logit, cls_seg_feats  = self.inference(imgs[i], img_metas[i], rescale)
             seg_logit += cur_seg_logit
+            
         seg_logit /= len(imgs)
         seg_pred = seg_logit.argmax(dim=1)
         seg_pred = seg_pred.cpu().numpy()
         # unravel batch dim
         seg_pred = list(seg_pred)
-        return seg_pred
+        return seg_pred,cls_seg_feats

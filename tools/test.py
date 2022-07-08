@@ -270,7 +270,7 @@ def main():
                 'Please use MMCV >= 1.4.4 for CPU training!'
         model = revert_sync_batchnorm(model)
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
-        results = single_gpu_test(
+        results,cls_features = single_gpu_test(
             model,
             data_loader,
             args.show,
@@ -304,7 +304,9 @@ def main():
                 'np.array, pre-eval results or file paths for '
                 '``dataset.format_results()``.')
             print(f'\nwriting results to {args.out}')
-            mmcv.dump(results, args.out)
+            # mmcv.dump(results, args.out)
+            mmcv.dump(cls_features, args.out)
+
         if args.eval:
             eval_kwargs.update(metric=args.eval)
             metric = dataset.evaluate(results, **eval_kwargs)

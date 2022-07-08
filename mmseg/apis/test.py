@@ -77,6 +77,7 @@ def single_gpu_test(model,
 
     model.eval()
     results = []
+    cls_features = []
     dataset = data_loader.dataset
     prog_bar = mmcv.ProgressBar(len(dataset))
     # The pipeline about how the data_loader retrieval samples from dataset:
@@ -88,7 +89,7 @@ def single_gpu_test(model,
 
     for batch_indices, data in zip(loader_indices, data_loader):
         with torch.no_grad():
-            result = model(return_loss=False, **data)
+            result, cls_feature = model(return_loss=False, **data)
 
         if show or out_dir:
             img_tensor = data['img'][0]
@@ -127,14 +128,15 @@ def single_gpu_test(model,
             # only samples_per_gpu=1 valid now
             result = dataset.pre_eval(result, indices=batch_indices)
             results.extend(result)
+
         else:
             results.extend(result)
-
+            cls_features.append(cls_feature)
         batch_size = len(result)
         for _ in range(batch_size):
             prog_bar.update()
-
-    return results
+        
+    return results,cls_features
 
 
 def multi_gpu_test(model,
